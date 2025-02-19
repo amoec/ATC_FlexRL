@@ -1,0 +1,6 @@
+[submodule "SecCREnv"]
+	path = SecCREnv
+	url = https://github.com/amoec/SecCREnv.git
+[submodule "atcenv_gym"]
+	path = atcenv_gym
+	url = https://github.com/jangroter/atcenv.git
