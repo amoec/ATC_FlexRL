@@ -7,8 +7,8 @@ import csv
 from collections import defaultdict
 
 # Local imports
-import atcenv_gym.main as lofi
-import SecCREnv.main as hifi
+import CR_LoFi.main as lofi
+import CR_HiFi.main as hifi
 
 def write_timing_row(algo, pct, env_type, duration):
     csv_path = f"/scratch/amoec/ATC_RL/{algo}_ts.csv"
