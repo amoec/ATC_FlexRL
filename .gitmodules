@@ -1,6 +1,6 @@
 [submodule "CR-HiFi"]
-	path = CR-HiFi
+	path = CR_HiFi
 	url = https://github.com/amoec/CR-HiFi.git
 [submodule "CR-LoFi"]
-	path = CR-LoFi
+	path = CR_LoFi
 	url = https://github.com/amoec/CR-LoFi.git
