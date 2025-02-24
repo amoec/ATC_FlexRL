@@ -136,10 +136,7 @@ def main(selected_algo, smoothing_choice, show_target=False, show_plot=False, sa
 algos = ['A2C', 'PPO', 'SAC', 'DDPG', 'TD3']
 
 # Training types
-training_types = np.hstack((np.array(['full']), np.linspace(0, 100.0, 21)[1:]))
-
-# TODO: Remove this
-training_types = training_types[:-2]
+training_types = np.hstack((np.array(['full']), np.linspace(0, 100.0, 21)[1:]))[:-6]
 
 if __name__=='__main__':
     selected_algo = int(input(f"Select from the following algorithms:\n1. A2C\n2. PPO\n3. SAC\n4. DDPG\n5. TD3\n")) - 1 # 0-indexed
