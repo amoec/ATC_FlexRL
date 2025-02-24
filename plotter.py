@@ -3,18 +3,7 @@ import csv
 import pandas as pd
 import numpy as np
 
-def kalman_filter(data, process_variance=1e-5, measurement_variance=1):
-    estimates = np.zeros(len(data))
-    posteri_estimate = data[0]
-    posteri_error_estimate = 1.0
-    for i, measurement in enumerate(data):
-        priori_estimate = posteri_estimate
-        priori_error_estimate = posteri_error_estimate + process_variance
-        kalman_gain = priori_error_estimate / (priori_error_estimate + measurement_variance)
-        posteri_estimate = priori_estimate + kalman_gain * (measurement - priori_estimate)
-        posteri_error_estimate = (1 - kalman_gain) * priori_error_estimate
-        estimates[i] = posteri_estimate
-    return estimates
+from common.filters import kalman
 
 def find_target(selected_algo, window=100, show_plot=True):
     '''
@@ -29,8 +18,8 @@ def find_target(selected_algo, window=100, show_plot=True):
     lofi_cleaned = lofi_results.groupby('episode').sum().drop(columns=['timesteps'])
     hifi_cleaned = hifi_results.groupby('episode').sum().drop(columns=['timesteps'])
     
-    lofi_cleaned = kalman_filter(lofi_cleaned['reward'].values)
-    hifi_cleaned = kalman_filter(hifi_cleaned['reward'].values)
+    lofi_cleaned = kalman(lofi_cleaned['reward'].values)
+    hifi_cleaned = kalman(hifi_cleaned['reward'].values)
 
     
     lofi_target = np.mean(lofi_cleaned[-window:])
@@ -104,8 +93,8 @@ def main(selected_algo, smoothing_choice, show_target=False, show_plot=False, sa
             data_lofi = LoFi_cleaned[training]['reward'].rolling(window=window).mean()
             data_hifi = HiFi_cleaned[training]['reward'].rolling(window=window).mean()
         elif smoothing_choice == 2:
-            data_lofi = kalman_filter(LoFi_cleaned[training]['reward'].values)
-            data_hifi = kalman_filter(HiFi_cleaned[training]['reward'].values)
+            data_lofi = kalman(LoFi_cleaned[training]['reward'].values)
+            data_hifi = kalman(HiFi_cleaned[training]['reward'].values)
         
         data = np.hstack((data_lofi, data_hifi))
         
@@ -136,7 +125,7 @@ def main(selected_algo, smoothing_choice, show_target=False, show_plot=False, sa
 algos = ['A2C', 'PPO', 'SAC', 'DDPG', 'TD3']
 
 # Training types
-training_types = np.hstack((np.array(['full']), np.linspace(0, 100.0, 21)[1:]))[:-6]
+training_types = np.hstack((np.array(['full']), np.linspace(0, 100.0, 21)[1:]))[:-6] # TODO: add back the final elements when TD3 is done cooking
 
 if __name__=='__main__':
     selected_algo = int(input(f"Select from the following algorithms:\n1. A2C\n2. PPO\n3. SAC\n4. DDPG\n5. TD3\n")) - 1 # 0-indexed
