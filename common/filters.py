@@ -1,31 +1,67 @@
 import numpy as np
+import pandas as pd
 
-def kalman(data, process_variance=1e-5, measurement_variance=1):
+def moving_avg(df: pd.DataFrame, col: str, window: int=250, *args, **kwargs) -> pd.DataFrame:
     """
-    Basic Kalman filter implementation.
+    Moving average filter.
     
     Parameters:
     -----------
-    data: np.array
+    df: pd.DataFrame
         Data to filter.
-    process_variance: float
-        Process variance.
-    measurement_variance: float
-        Measurement variance.
+    col: str
+        Column name.
+    window: int
+        Window size for the moving average.
         
     Returns:
     --------
-    np.array
+    pd.DataFrame
         Filtered data.
     """
-    estimates = np.zeros(len(data))
-    posteri_estimate = data[0]
-    posteri_error_estimate = 1.0
-    for i, measurement in enumerate(data):
-        priori_estimate = posteri_estimate
-        priori_error_estimate = posteri_error_estimate + process_variance
-        kalman_gain = priori_error_estimate / (priori_error_estimate + measurement_variance)
-        posteri_estimate = priori_estimate + kalman_gain * (measurement - priori_estimate)
-        posteri_error_estimate = (1 - kalman_gain) * priori_error_estimate
-        estimates[i] = posteri_estimate
-    return estimates
+    df_f = df.copy()
+    df_f[col] = df[col].rolling(window=window).mean()
+    return df_f.dropna()
+    
+
+def kalman(df: pd.DataFrame, col: str, proc_var: float=1e-5, mes_var: float=1, *args, **kwargs) -> pd.DataFrame:
+    """
+    Apply Kalman filter to the data.
+    
+    Parameters:
+    -----------
+    df: pd.DataFrame
+        Data to filter.
+    col: str
+        Column name.
+    proc_var: float
+        Process variance.
+    mes_var: float
+        Measurement variance.
+    
+    Returns:
+    --------
+    pd.DataFrame
+        Filtered data.
+    """
+    df_f = df.copy()
+    n = len(df_f)
+    xhat = np.zeros(n)
+    P = np.zeros(n)
+    xhatminus = np.zeros(n)
+    Pminus = np.zeros(n)
+    K = np.zeros(n)
+    
+    xhat[0] = df_f[col][0]
+    P[0] = proc_var
+    
+    for k in range(1, n):
+        xhatminus[k] = xhat[k-1]
+        Pminus[k] = P[k-1] + proc_var
+        
+        K[k] = Pminus[k] / (Pminus[k] + mes_var)
+        xhat[k] = xhatminus[k] + K[k] * (df_f[col][k] - xhatminus[k])
+        P[k] = (1 - K[k]) * Pminus[k]
+        
+    df_f[col] = xhat
+    return df_f

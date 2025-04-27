@@ -3,6 +3,8 @@
 exp/
 plots/
 filestructure.txt
-notes.txt
+todo.txt
 CR_HiFi/logs_backup
 CR_HiFi/.github
+data
+*.backup
