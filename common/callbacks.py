@@ -118,120 +118,81 @@ class TimestepStoppingCallback(BaseCallback):
         return True
 class SafeLogCallback(BaseCallback):
     """
-    Combined callback that logs metrics to CSV and safely saves the model before timeout.
+    Combined callback that logs per‐episode metrics to CSV and safely saves the model
+    before timeout. Flushes every 25 episodes or at the end of training.
     """
-    def __init__(self, model_path, log_dir, log_filename, timeout, 
-                 save_buffer=True, safety=15, flush_frequency=1000, verbose=0):
-        """
-        Initialize the callback.
-        
-        Parameters:
-        -----------
-        model_path: str
-            Path to save the model.
-        log_dir: str
-            Directory for saving logs.
-        log_filename: str
-            Name of the CSV log file.
-        timeout: datetime.datetime
-            Time when the job will timeout.
-        save_buffer: bool
-            Whether to save the replay buffer (if applicable).
-        safety: float
-            Safety margin in minutes.
-        flush_frequency: int
-            How often to write buffered logs to file.
-        verbose: int
-            Verbosity level.
-        """
+    def __init__(self, model_path, log_dir, log_filename, timeout,
+                 save_buffer=True, safety=15, flush_frequency=25, verbose=0):
         super().__init__(verbose)
-        
-        # SafeSave parameters
+        # SafeSave params
         self.model_path = model_path
         self.timeout = timeout
-        self.safety = safety * 60  # Convert to seconds
+        self.safety = safety * 60  # sec
         self.save_buffer = save_buffer
-        
-        # CSVLogger parameters
+
+        # CSV logger params
         os.makedirs(log_dir, exist_ok=True)
         self.log_path = os.path.join(log_dir, log_filename)
-        self.headers = [
-            "timesteps",
-            "episode",
-            "reward"
-        ]
+        self.headers = ["timesteps", "episode", "reward"]
         self.current_episode = 0
-        self.buffer = []  # buffer for metrics
+        self.buffer = []
         self.flush_frequency = flush_frequency
+        self.episode_reward = 0.0
         self._write_header()
-    
+
     def _write_header(self):
-        """Create CSV file with headers if it doesn't exist."""
         if not os.path.exists(self.log_path) or os.path.getsize(self.log_path) == 0:
             with open(self.log_path, "w") as f:
-                writer = csv.writer(f)
-                writer.writerow(self.headers)
-    
+                csv.writer(f).writerow(self.headers)
+
     def _flush_buffer(self):
-        """Write buffered logs to CSV file."""
-        if self.buffer:
-            with open(self.log_path, "a") as f:
-                writer = csv.writer(f)
-                for metrics in self.buffer:
-                    writer.writerow([metrics[h] for h in self.headers])
-            self.buffer = []
-    
-    def _early_stop(self):
-        """Check if we're close to the timeout."""
-        current_time = datetime.datetime.now()
-        return (self.timeout - current_time).total_seconds() <= self.safety
-    
+        if not self.buffer:
+            return
+        with open(self.log_path, "a") as f:
+            writer = csv.writer(f)
+            for m in self.buffer:
+                writer.writerow([m[h] for h in self.headers])
+        self.buffer = []
+
+    def _early_stop(self) -> bool:
+        return (self.timeout - datetime.datetime.now()).total_seconds() <= self.safety
+
     def _on_step(self) -> bool:
-        """Process step data and check for timeout conditions."""
-        # Get rewards and done state
-        step_reward = self.locals.get("rewards", [0])[0]
+        # accumulate reward
+        r = self.locals.get("rewards", [0])[0]
         done = self.locals.get("dones", [False])[0]
-        
-        # Only increment episode count when an episode is done
-        if done:
-            self.current_episode += 1
-        
-        # Log metrics
-        metrics = {
+        self.episode_reward += r
+
+        if not done:
+            return True
+
+        # episode ended → log, flush if needed, maybe early‐stop
+        self.current_episode += 1
+        self.buffer.append({
             "timesteps": self.num_timesteps,
             "episode": self.current_episode,
-            "reward": step_reward
-        }
-        
-        # Store metric in buffer
-        self.buffer.append(metrics)
-        
-        # Regular flush based on episode count
-        if done and self.current_episode % self.flush_frequency == 0:
+            "reward": self.episode_reward
+        })
+
+        if self.current_episode % self.flush_frequency == 0:
             self._flush_buffer()
-        
-        # Check for timeout when episode is done
-        if done and self._early_stop():
-            # First flush logs to ensure we save all data
+
+        if self._early_stop():
             self._flush_buffer()
-            
-            # Then save model and buffer
             self.model.save(self.model_path)
-            
-            # Save buffer if algorithm has one
             if self.save_buffer:
                 try:
                     self.model.save_replay_buffer(self.model_path + "_buffer")
                 except AttributeError:
                     pass
-            
-            if self.verbose > 0:
-                print(f"Training stopped due to approaching timeout. Model and logs saved.")
-            
+            if self.verbose:
+                print("Stopped: approaching timeout. Model & logs saved.")
             return False
-                    
+
+        # reset for next episode
+        self.episode_reward = 0.0
         return True
-    
+
     def _on_training_end(self):
-        """Ensure all logs are saved at the end of training."""
+        # flush any remaining records
         self._flush_buffer()
