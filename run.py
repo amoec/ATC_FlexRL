@@ -101,7 +101,7 @@ def main(args):
                     window=window,
                     seed=seed,
                     baseline=True,
-                    restart=restart,
+                    restart=False,
                     timeout=timeout
                 )
                 
@@ -160,7 +160,7 @@ def main(args):
                     pre_train=str(pct),
                     window=window,
                     seed=base_seed,
-                    restart=restart,
+                    restart=False,
                     baseline=False
                 )
                 
