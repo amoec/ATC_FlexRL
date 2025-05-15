@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import csv
+import sys
 
 import datetime
 from stable_baselines3.common.callbacks import BaseCallback
@@ -187,6 +188,7 @@ class SafeLogCallback(BaseCallback):
                     pass
             if self.verbose:
                 print("Stopped: approaching timeout. Model & logs saved.")
+                sys.exit(0)
             return False
 
         # reset for next episode
