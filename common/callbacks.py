@@ -188,7 +188,7 @@ class SafeLogCallback(BaseCallback):
                     pass
             if self.verbose:
                 print("Stopped: approaching timeout. Model & logs saved.")
-                sys.exit(0)
+            sys.exit(0)
             return False
 
         # reset for next episode
