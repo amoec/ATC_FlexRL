@@ -101,7 +101,7 @@ def main(args):
                     window=window,
                     seed=seed,
                     baseline=True,
-                    restart=restart,
+                    restart=False,
                     timeout=timeout
                 )
                 
@@ -117,15 +117,11 @@ def main(args):
         
         # Incremental training runs
         for pct in pcts:
-            
             # LoFi training with percentage target
             lofi_folder = f"{lofi_path}/{algo}_{pct}"
-            lofi_log_path = f"{lofi_folder}/logs/results.csv"
-            target_timesteps = int((pct/100) * 3e6)
-            training_complete = check_training_completed(lofi_log_path, target_timesteps)
             
-            if not os.path.exists(lofi_folder) or not training_complete:
-                restart = os.path.exists(lofi_folder) and not training_complete
+            if not os.path.exists(lofi_folder):
+                restart = False
                 
                 lofi_args = [
                     '--config', config_path,
@@ -145,11 +141,9 @@ def main(args):
             
             # HiFi training with pre-training percentage
             hifi_folder = f"{hifi_path}/{algo}_{pct}"
-            hifi_log_path = f"{hifi_folder}/logs/results.csv"
-            training_complete = check_training_completed(hifi_log_path, int(2e6))
             
-            if not os.path.exists(hifi_folder) or not training_complete:
-                restart = os.path.exists(hifi_folder) and not training_complete
+            if not os.path.exists(hifi_folder):
+                restart = False
                 
                 hifi_args = argparse.Namespace(
                     algorithm=algo,
