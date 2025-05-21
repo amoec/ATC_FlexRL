@@ -1,164 +1,156 @@
 import pandas as pd
 import numpy as np
 
-def dropoff(dfs: dict, N: int) -> dict:
-    '''
-    Calculate the dropoff metrics from env switch.
+def _assign_env(df: pd.DataFrame, pct: float):
+    """
+    Add an 'env' column: 0=LoFi, 1=HiFi, and return switch episode t_s.
     
-    Parameters:
-    -----------
-    dfs: dict
-        Raw and moving avg dataframes.
-    N: int
-        Moving avg window.
-    
-    Returns:
-    --------
-    dict
-        Dropoff metrics.
-    '''
-    # Init metrics dict
-    metrics = {
-        't_rec': np.nan,
-        'tau': np.nan,
-        'tau_rel': np.nan,
-        'Pbar_s': np.nan,
-        'Pbar_d': np.nan,
-        'DeltaPbar_d': np.nan,
-        'DeltaPbar_d_rel': np.nan,
-        'DeltaPbar*_d_rel': np.nan
-    }
-    
-    # Extract the dataframes
-    P = dfs['raw']
-    Pbar = dfs['Pbar']
-    
-    # Useful constants
-    t_s = Pbar.loc[Pbar['env'] == 0, 'episode'].iloc[-1] # Switch episode
-    t_end = Pbar['episode'].iloc[-1] # End episode
-    Pbar_min = Pbar['reward'].min()# Min reward
-    Pbar_max = Pbar['reward'].max() # Max reward
-    
-    # Find the switch peak
-    Pbar_s = Pbar.loc[Pbar['env'] == 0, 'reward'].iloc[-(N+1):].mean()
-    
-    # Update the metrics dict
-    metrics['Pbar_s'] = Pbar_s
-    
-    # Find the recovery episode
-    rec_cond = (Pbar['env'] == 1) & (Pbar['reward'] >= Pbar_s) & (Pbar['episode'] > t_s + N/4)
-    
-    # Protect against irrecoverable cases
-    if rec_cond.any():
-        t_rec = Pbar.loc[rec_cond, 'episode'].iloc[0]
-    
-        # Find the time-to-recovery
-        tau = t_rec - t_s
-        tau_rel = tau/t_end
-        
-        # Update the metrics dict
-        metrics['t_rec'] = t_rec
-        metrics['tau'] = tau
-        metrics['tau_rel'] = tau_rel
-        
-        # Find the dropoff avg
-        drop_cond = (P['env'] == 1) & (P['episode'] <= t_rec) & (Pbar['episode'] > t_s + N/4)
-        
-        # Protect against irrecoverable cases (maybe redundant)
-        if drop_cond.any():
-            Pbar_d = P.loc[drop_cond, 'reward'].mean()
-            
-            # Find the dropoff delta
-            DeltaPbar_d = Pbar_d - Pbar_s
-            DeltaPbar_d_rel = DeltaPbar_d/(Pbar_s - Pbar_min) # Relative to switch peak
-            DeltaPbar_star_d_rel = DeltaPbar_d/(Pbar_max - Pbar_min) # Relative to max
-            
-            # Update the metrics dict
-            metrics['Pbar_d'] = Pbar_d
-            metrics['DeltaPbar_d'] = DeltaPbar_d
-            metrics['DeltaPbar_d_rel'] = DeltaPbar_d_rel
-            metrics['DeltaPbar*_d_rel'] = DeltaPbar_star_d_rel
-    
-    return metrics
+    For pct==100.0 (pure LoFi): env=0 everywhere, t_s = last episode.
+    For pct==0.0   (pure HiFi): env=1 everywhere, t_s = -1.
+    Otherwise detect the big jump in episode numbering.
+    """
+    df = df.copy()
+    if pct == 100.0:
+        # all LoFi
+        df['env'] = 0
+        t_s = int(df['episode'].iloc[-1])
+    elif pct == 0.0:
+        # all HiFi
+        df['env'] = 1
+        t_s = -1
+    else:
+        # mixed run: look for the first jump >1
+        diffs = df['episode'].diff()
+        jumps = diffs[diffs > 1].index
+        if len(jumps) > 0:
+            switch_idx = jumps[0]
+            t_s = int(df.loc[switch_idx - 1, 'episode'])
+            df['env'] = (df['episode'] > t_s).astype(int)
+        else:
+            # fallback: treat as all LoFi
+            df['env'] = 0
+            t_s = int(df['episode'].iloc[-1])
+    return df, t_s
 
-def performance(dfs: dict, ctrl_vars: dict, N: int) -> dict:
-    '''
-    Calculate the performance metrics.
-    
-    Parameters:
-    -----------
-    dfs: dict
-        Raw and moving avg dataframes.
-    ctrl_vars: dict
-        Control variables (baseline measurements).
-    N: int
-        Moving avg window.
-    
-    Returns:
-    --------
-    dict
-        Performance metrics.
-    '''
-    # Init metrics dict
-    metrics = {
-        "DeltaPbar": np.nan,
-        "DeltaPbar_rel": np.nan,
-        "t_XO": np.nan,
-        "t_XO_rel": np.nan,
-        "T_tot": np.nan,
-        "T_tot_rel": np.nan
-    }
-    
-    # Extract the dataframes
-    P = dfs['raw']
-    Pbar = dfs['Pbar']
-    T_lofi = dfs['time']['lofi'] # [s]
-    T_hifi = dfs['time']['hifi'] # [s]
-    
-    # Useful constants
-    Pbar_max = Pbar['reward'].max() # Max reward
-    Pbar_min_HiFi = ctrl_vars['Pbar_min'][0]
-    Pbar_max_HiFi = ctrl_vars['Pbar_max'][0]
-    T_max_HiFi = ctrl_vars['T_max'][0]
-    t_s = Pbar.loc[Pbar['env'] == 0, 'episode'].iloc[-1] # Switch episode
-    t_end = Pbar['episode'].iloc[-1] # End episode
-    
-    # Std devs
-    Pbar_min_HiFi_std = ctrl_vars['Pbar_min'][1]
-    Pbar_max_HiFi_std = ctrl_vars['Pbar_max'][1]
-    T_max_HiFi_std = ctrl_vars['T_max'][1]
-    
-    # TODO: Add logic to confidence interval logic
-    
-    # Find the performance delta
-    DeltaPbar = Pbar_max - Pbar_max_HiFi
-    DeltaPbar_rel = DeltaPbar/(Pbar_max_HiFi - Pbar_min_HiFi)
-    
-    # Update the metrics dict
-    metrics['DeltaPbar'] = DeltaPbar
-    metrics['DeltaPbar_rel'] = DeltaPbar_rel
-    
-    # Find the crossover episode
-    XO_cond = (P['env'] == 1) & (Pbar['reward'].rolling(window=N).min() >= Pbar_max_HiFi)
-    
-    # Protect against irrecoverable cases
-    if XO_cond.any():
-        # Find the crossover episode
-        t_XO = Pbar.loc[XO_cond, 'episode'].iloc[0]
-        t_XO_rel = t_XO/t_end
-        
-        # Update the metrics dict
-        metrics['t_XO'] = t_XO
-        metrics['t_XO_rel'] = t_XO_rel
-        
-        # Estimate the time (in seconds) to crossover
-        t_XO_rel_hifi = (t_XO - t_s)/(t_end - t_s)
-        T_tot = T_lofi + t_XO_rel_hifi*T_hifi
-        T_tot_rel = T_tot/T_max_HiFi
-        
-        # Update the metrics dict
-        metrics['T_tot'] = T_tot
-        metrics['T_tot_rel'] = T_tot_rel
-    
-    return metrics
+def dropoff(aggregated: dict, N: int) -> dict:
+    """
+    Compute dropoff metrics for every algo/pct in `aggregated`.
+    Skips pure runs (pct 0.0 or 100.0).
+    Returns nested dict[algo][pct]→metrics.
+    """
+    all_m = {}
+    for algo, pct_map in aggregated.items():
+        all_m[algo] = {}
+        for pct, df in pct_map.items():
+            if pct in (0.0, 100.0):
+                continue
 
+            # prepare
+            Pbar = df[['episode', 'mean_reward']].rename(columns={'mean_reward': 'reward'})
+            Pbar, t_s = _assign_env(Pbar, pct)
+            t_end = int(Pbar['episode'].max())
+            Pmin, Pmax = Pbar['reward'].min(), Pbar['reward'].max()
+            Pbar_s = float(Pbar.loc[Pbar['env']==0, 'reward'].tail(N+1).mean())
+
+            m = dict(
+                t_rec=np.nan, tau=np.nan, tau_rel=np.nan,
+                Pbar_s=Pbar_s,
+                Pbar_d=np.nan, DeltaPbar_d=np.nan,
+                DeltaPbar_d_rel=np.nan, DeltaPbar_star_d_rel=np.nan
+            )
+
+            # recovery
+            rec = ((Pbar['env']==1) &
+                   (Pbar['reward'] >= Pbar_s) &
+                   (Pbar['episode'] > t_s + N/4))
+            if rec.any():
+                t_rec = int(Pbar.loc[rec, 'episode'].iloc[0])
+                tau = t_rec - t_s
+                m.update(t_rec=t_rec, tau=tau, tau_rel=tau/t_end)
+
+                drop = ((Pbar['env']==1) &
+                        (Pbar['episode'] <= t_rec) &
+                        (Pbar['episode'] > t_s + N/4))
+                if drop.any():
+                    Pbar_d = float(Pbar.loc[drop, 'reward'].mean())
+                    delta = Pbar_d - Pbar_s
+                    m.update(
+                        Pbar_d=Pbar_d,
+                        DeltaPbar_d=delta,
+                        DeltaPbar_d_rel=delta/(Pbar_s - Pmin) if Pbar_s!=Pmin else np.nan,
+                        DeltaPbar_star_d_rel=delta/(Pmax - Pmin) if Pmax!=Pmin else np.nan
+                    )
+
+            all_m[algo][pct] = m
+    return all_m
+
+def performance(aggregated: dict,
+                avg_times: dict,
+                N: int) -> dict:
+    """
+    Compute performance metrics vs. the 100%‐LoFi baseline.
+    Needs avg_times[algo][pct]['lofi_duration'] & ['hifi_duration'].
+    Returns nested dict[algo][pct]→metrics.
+    """
+    perf = {}
+    for algo, pct_map in aggregated.items():
+        if 100.0 not in pct_map or algo not in avg_times:
+            continue
+
+        # baseline is 100% LoFi → switch to HiFi never happens
+        base_df = pct_map[100.0][['episode','mean_reward']].rename(columns={'mean_reward':'reward'})
+        base_Pbar, _ = _assign_env(base_df, 100.0)
+        Pmin, Pmax = base_Pbar['reward'].min(), base_Pbar['reward'].max()
+        T_max = avg_times[algo][100.0]['lofi_duration']  # pure LoFi time
+
+        perf[algo] = {}
+        for pct, df in pct_map.items():
+            Pbar_df = df[['episode','mean_reward']].rename(columns={'mean_reward':'reward'})
+            Pbar, t_s = _assign_env(Pbar_df, pct)
+            t_end = int(Pbar['episode'].max())
+
+            deltaP = float(Pbar['reward'].max() - Pmax)
+            deltaP_rel = deltaP/(Pmax - Pmin) if Pmax!=Pmin else np.nan
+
+            m = dict(
+                DeltaPbar=deltaP,
+                DeltaPbar_rel=deltaP_rel,
+                t_XO=np.nan, t_XO_rel=np.nan,
+                T_tot=np.nan, T_tot_rel=np.nan
+            )
+
+            # only mixed runs can crossover
+            if pct not in (0.0, 100.0):
+                roll_min = Pbar['reward'].rolling(window=N).min()
+                xo = (Pbar['env']==1) & (roll_min >= Pmax)
+                if xo.any():
+                    t_xo = int(Pbar.loc[xo, 'episode'].iloc[0])
+                    t_xo_rel = t_xo/t_end
+                    frac_hi = (t_xo - t_s)/(t_end - t_s) if (t_end>t_s) else np.nan
+
+                    T_lo = avg_times[algo][pct]['lofi_duration']
+                    T_hi = avg_times[algo][pct]['hifi_duration']
+                    Ttot = T_lo + frac_hi * T_hi
+                    m.update(
+                        t_XO=t_xo, t_XO_rel=t_xo_rel,
+                        T_tot=Ttot,
+                        T_tot_rel=Ttot/T_max if T_max>0 else np.nan
+                    )
+
+            perf[algo][pct] = m
+    return perf
+
+def performance_contour(perf_metrics: dict) -> dict:
+    """
+    Convert perf_metrics to DataFrames keyed by algo.
+    """
+    return {algo: pd.DataFrame.from_dict(pm, orient='index')
+            for algo, pm in perf_metrics.items()}
+
+def transfer_gap(perf_metrics: dict) -> dict:
+    """
+    Extract only DeltaPbar for each algo/pct.
+    """
+    return {algo: {pct: v['DeltaPbar'] 
+                   for pct, v in pm.items()}
+            for algo, pm in perf_metrics.items()}

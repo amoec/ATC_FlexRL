@@ -5,8 +5,7 @@ import numpy as np
 import pickle
 from tqdm import tqdm
 from typing import Callable
-
-import glob
+import warnings
 from collections import defaultdict
 
 # Local imports
@@ -14,229 +13,181 @@ from common import metrics, plot
 from common.filters import moving_avg, kalman
 
 
-# ---- Helper functions ----
-
-def convert_legacy_logs(root_dir: str) -> None:
-    """
-    Convert legacy `results.csv` files (reward logged every timestep) to the
-    new, episode‑level format. The function rewrites the CSV in‑place if it
-    detects legacy structure.
-    """
-    for csv_path in glob.glob(os.path.join(root_dir, "**/logs/results.csv"), recursive=True):
-        df = pd.read_csv(csv_path)
-        # Legacy ⇒ either a 'timesteps' column or duplicate episode indices.
-        if ("timesteps" in df.columns) or df.duplicated(subset=["episode"]).any():
-            df = df.groupby("episode", as_index=False)["reward"].sum()
-            df.to_csv(csv_path, index=False)
-
-
-def aggregate_results(seed_results: list[dict]) -> dict:
-    """
-    Merge per‑seed `results` dicts into a single dict whose `Pbar` dataframes
-    contain the mean reward per episode (column `reward`) plus a `reward_std`
-    column. Numerical metrics are averaged as scalars.
-    """
-    merged: dict = {}
-    for res in seed_results:
-        for algo, lvl_dict in res.items():
-            merged.setdefault(algo, {})
-            for lvl, data in lvl_dict.items():
-                merged[algo].setdefault(lvl, {"dfs": [], "drop": [], "perf": []})
-                merged[algo][lvl]["dfs"].append(
-                    data["Pbar"][["episode", "reward"]].copy()
-                )
-                merged[algo][lvl]["drop"].append(data["dropoff"])
-                merged[algo][lvl]["perf"].append(data["performance"])
-
-    for algo, lvl_dict in merged.items():
-        for lvl, acc in lvl_dict.items():
-            rewards = [
-                df.set_index("episode")["reward"] for df in acc.pop("dfs")
-            ]
-            rewards_df = pd.concat(rewards, axis=1)
-            mean_df = rewards_df.mean(axis=1).reset_index()
-            mean_df.columns = ["episode", "reward"]
-            mean_df["reward_std"] = rewards_df.std(axis=1).values
-            merged[algo][lvl]["Pbar"] = mean_df
-            merged[algo][lvl]["dropoff"] = float(np.mean(acc["drop"]))
-            merged[algo][lvl]["performance"] = float(np.mean(acc["perf"]))
-    return merged
-
-
-def aggregate_ctrl(ctrl_list: list[dict]) -> dict:
-    """
-    Average the baseline statistics (stored in `ctrl`) across seeds so that
-    plot helpers keep the same interface: value[0]=mean, value[1]=std.
-    """
-    tmp = defaultdict(lambda: defaultdict(list))
-    for c in ctrl_list:
-        for algo, metr in c.items():
-            for k, v in metr.items():
-                tmp[algo][k].append(v[0] if isinstance(v, list) else v)
-
-    out = {}
-    for algo, metr in tmp.items():
-        out[algo] = {}
-        for k, arr in metr.items():
-            out[algo][k] = [float(np.mean(arr)), float(np.std(arr))]
-    return out
-
-
-# ---- Per-seed analysis worker ----
-
-def process_seed(root_dir: str,
-                 algos: list[str],
-                 training: np.ndarray,
-                 N: int) -> tuple[dict, dict]:
-    """
-    Run the original (single‑seed) analysis pipeline and return its results
-    without writing plots/metrics to disk.
-    """
-    results = {}
-    ctrl = {}
-
-    tqdm.write(f"\n### DATA POST‑PROCESSING for {root_dir} ###\n")
-    for algo in tqdm(algos, desc="Processing algorithms", position=0):
-        dirpath_lofi   = f"{root_dir}LoFi-{algo}/"
-        dirpath_hifi   = f"{root_dir}HiFi-{algo}/"
-        dirpath_lofi_base = f"{root_dir}baseline/LoFi-{algo}/"
-        dirpath_hifi_base = f"{root_dir}baseline/HiFi-{algo}/"
-        full_baseline = os.path.exists(dirpath_lofi_base) and os.path.exists(dirpath_hifi_base)
-
-        if not (os.path.exists(dirpath_lofi) and os.path.exists(dirpath_hifi)):
-            tqdm.write(f"[WARN] {algo}: missing LoFi/HiFi folders in {root_dir}")
-            continue
-
-        results[algo] = {lvl: {} for lvl in training}
-        ts_path = f"{root_dir}{algo}_ts.csv"
-        if not os.path.exists(ts_path):
-            tqdm.write(f"[WARN] {algo}: missing {ts_path}")
-            continue
-        ts = pd.read_csv(ts_path)
-
-        # ---------- baseline ----------
-        baseline_vars = {k: [] for k in ["Pbar_min", "Pbar_max", "T_max", "t_max", "t_end"]}
-        base_hifi = pd.read_csv(f"{dirpath_hifi}{algo}_full/logs/results.csv")
-        base_hifi = kalman(base_hifi, "reward")
-        base_hifi = moving_avg(base_hifi, "reward", window=N)
-
-        max_cond = base_hifi["episode"] >= base_hifi["episode"].iloc[-1] * 0.05
-        baseline_vars["Pbar_min"].append(base_hifi["reward"].min())
-        baseline_vars["Pbar_max"].append(base_hifi.loc[max_cond, "reward"].max())
-
-        T_hifi = ts.loc[ts["percentage"] == "full", "hifi-duration"].iloc[0]
-        ep_max = base_hifi["episode"].iloc[base_hifi.loc[max_cond, "reward"].idxmax()]
-        t_end  = base_hifi["episode"].iloc[-1]
-        baseline_vars["T_max"].append(ep_max * T_hifi / t_end)
-        baseline_vars["t_max"].append(ep_max)
-        baseline_vars["t_end"].append(t_end)
-
-        if full_baseline:
-            sub_hifi = [
-                os.path.join(dirpath_hifi_base, d)
-                for d in os.listdir(dirpath_hifi_base)
-                if d.startswith("run_")
-            ]
-            for hifi in sub_hifi:
-                df_b = pd.read_csv(f"{hifi}/logs/results.csv")
-                df_b = kalman(df_b, "reward")
-                df_b = moving_avg(df_b, "reward", window=N)
-
-                max_c = df_b["episode"] >= df_b["episode"].iloc[-1] * 0.05
-                baseline_vars["Pbar_min"].append(df_b["reward"].min())
-                baseline_vars["Pbar_max"].append(df_b.loc[max_c, "reward"].max())
-                baseline_vars["t_max"].append(
-                    df_b["episode"].iloc[df_b.loc[max_c, "reward"].idxmax()]
-                )
-                baseline_vars["t_end"].append(df_b["episode"].iloc[-1])
-
-            ts_base = pd.read_csv(f"{root_dir}baseline/{algo}_ts.csv")
-            T_hifi = ts_base["hifi-duration"]
-            T_max  = np.multiply(baseline_vars["t_max"], T_hifi / np.array(baseline_vars["t_end"]))
-            Pmin, Pmax = np.mean(baseline_vars["Pbar_min"]), np.mean(baseline_vars["Pbar_max"])
-            baseline_vars["Pbar_min"] = [Pmin, np.std(baseline_vars["Pbar_min"])]
-            baseline_vars["Pbar_max"] = [Pmax, np.std(baseline_vars["Pbar_max"])]
-            baseline_vars["T_max"] = [np.mean(T_max), np.std(T_max)]
-            baseline_vars["t_max"] = [np.mean(baseline_vars["t_max"]), np.std(baseline_vars["t_max"])]
-        else:
-            for k in ["Pbar_min", "Pbar_max", "T_max", "t_max"]:
-                baseline_vars[k].append(0)
-
-        ctrl[algo] = baseline_vars
-        # ---------- training levels ----------
-        for lvl in tqdm(training, desc=f"{algo}: training %", position=1, leave=False):
-            df_lofi = pd.read_csv(f"{dirpath_lofi}{algo}_{lvl}/logs/results.csv")
-            df_hifi = pd.read_csv(f"{dirpath_hifi}{algo}_{lvl}/logs/results.csv")
-
-            df_lofi = df_lofi.groupby("episode").sum().reset_index().drop(columns=["timesteps"], errors="ignore")
-            df_hifi = df_hifi.groupby("episode").sum().reset_index().drop(columns=["timesteps"], errors="ignore")
-
-            df_lofi["env"] = 0
-            df_hifi["env"] = 1
-            df_hifi["episode"] += df_lofi["episode"].max() + 1
-
-            df = pd.concat([df_lofi, df_hifi], ignore_index=True)
-            results[algo][lvl]["raw"] = df
-
-            Pbar = moving_avg(kalman(df, "reward"), "reward", window=N)
-            results[algo][lvl]["Pbar"] = Pbar
-
-            results[algo][lvl]["time"] = {
-                "lofi": ts.loc[ts["percentage"] == str(lvl), "lofi-duration"].iloc[0],
-                "hifi": ts.loc[ts["percentage"] == str(lvl), "hifi-duration"].iloc[0],
-            }
-            results[algo][lvl]["dropoff"] = metrics.dropoff(results[algo][lvl], N)
-            results[algo][lvl]["performance"] = metrics.performance(results[algo][lvl], baseline_vars, N)
-
-    return results, ctrl
-
-
-def main(N: int = 50, save_plot: bool = True, save_metrics: bool = True) -> None:
+def main(N: int = 50,
+         filter: Callable = moving_avg,
+         save_plot: bool = True,
+         save_metrics: bool = True,
+         max_ep: int = int(3e6 / 150)) -> None:
     """
     Perform full analysis on the results of the training runs.
     """
     algos = ["A2C", "PPO", "SAC", "TD3", "DDPG"]
-    training = np.linspace(0, 100, 21)[1:]  # 5…100 %
+    training = np.linspace(0, 100, 6)  # [0, 20, 40, 60, 80, 100] %
 
     base_dir = "experiments/"
     seed_dirs = sorted(d for d in os.listdir(base_dir) if d.startswith("ATC_RL."))
     if not seed_dirs:
         raise RuntimeError("No seed folders found in 'experiments/'. Expected 'ATC_RL.<seed>'.")
 
-    # Ensure every seed uses the new logging format
-    for sd in seed_dirs:
-        convert_legacy_logs(os.path.join(base_dir, sd))
+    print(f"Found {len(seed_dirs)} seed folders in '{base_dir}': {seed_dirs}")
+    seeds = [int(d.split(".")[1]) for d in seed_dirs]
+    print(f"Extracted seeds: {seeds}")
 
-    # Run the pipeline per seed
-    all_results, all_ctrl = [], []
-    for sd in seed_dirs:
-        seed_root = os.path.join(base_dir, sd) + "/"
-        r, c = process_seed(seed_root, algos, training, N)
-        all_results.append(r)
-        all_ctrl.append(c)
+    # store list of reward-series per (algo, pct)
+    results = {algo: defaultdict(list) for algo in algos}
+    times = {algo: [] for algo in algos}
 
-    # Aggregate across seeds
-    results = aggregate_results(all_results)
-    ctrl    = aggregate_ctrl(all_ctrl)
+    for exp in seed_dirs:
+        exp_dir = os.path.join(base_dir, exp)
+        print(f"Processing experiment directory: {exp_dir}")
 
-    tqdm.write("All seeds processed…")
+        for algo in algos:
+            # extract the timestamps for the current algo
+            time_path = os.path.join(exp_dir, f"{algo}_ts.csv")
+            
+            # load the timestamps
+            if os.path.exists(time_path):
+                time_df = pd.read_csv(time_path)
+                times[algo].append(time_df)
+            else:
+                warnings.warn(f"Missing timestamps for {algo} in {exp_dir}.")
+                continue
+            
+            for pct in training:
+                # assume subfolders "lofi_{algo}/<algo>_{pct}/logs/results.csv"
+                lofi_path = os.path.join(
+                    exp_dir,
+                    f"LoFi-{algo}",
+                    f"{algo}_{pct:.1f}",
+                    "logs",
+                    "results.csv",
+                )
+                hifi_path = os.path.join(
+                    exp_dir,
+                    f"HiFi-{algo}",
+                    f"{algo}_{pct:.1f}",
+                    "logs",
+                    "results.csv",
+                )
+                print(f"Loading results for {algo} at {pct:.1f}% from {lofi_path} and {hifi_path}")
 
-    # Persist aggregated results
+                if not os.path.exists(lofi_path) or not os.path.exists(hifi_path):
+                    warnings.warn(
+                        f"Missing results files for {algo} at {pct:.1f}% in {exp_dir}."
+                    )
+                    continue
+
+                lofi_df = pd.read_csv(lofi_path)
+                hifi_df = pd.read_csv(hifi_path)
+
+                # drop unwanted columns
+                for df in (lofi_df, hifi_df):
+                    if "timestep" in df.columns:
+                        df.drop(columns=["timestep"], inplace=True)
+
+                # trim to the right number of episodes
+                lo_cut = int(pct * max_ep / 100)+1
+                hi_cut = int((100 - pct) * max_ep / 100)
+                lofi_df = lofi_df.iloc[:lo_cut]
+                hifi_df = hifi_df.iloc[:hi_cut]
+
+                # stitch episodes together
+                if not lofi_df.empty:
+                    offset = lofi_df["episode"].max() + 1
+                else:
+                    offset = 0
+                # use .loc to avoid SettingWithCopyWarning
+                hifi_df.loc[:, "episode"] = hifi_df["episode"] + offset
+
+                # now stitch episodes together
+                exp_df = pd.concat([lofi_df, hifi_df], ignore_index=True)
+                # … then your existing cast …
+                exp_df = exp_df.astype({"episode": int})
+
+                if "reward" not in exp_df.columns:
+                    raise RuntimeError("Column 'reward' not found in results.csv")
+
+                # index by episode, store the reward series
+                rewards = exp_df.set_index("episode")["reward"]
+                results[algo][pct].append(rewards)
+
+    # aggregate across seeds
+    aggregated = {algo: {} for algo in algos}
+    avg_times = {algo: {} for algo in algos}
+    for algo in algos:
+        if times[algo]:
+            # concatenate all seed DataFrames
+            time_df_all = pd.concat(times[algo], ignore_index=True)
+            # group by percentage
+            grp = time_df_all.groupby('percentage')[['lofi-duration','hifi-duration']]
+            # compute mean and std
+            time_avg = grp.mean()
+            time_std = grp.std()
+            # store into avg_times[algo][pct]
+            for pct_val in time_avg.index:
+                avg_times[algo][pct_val] = {
+                    'lofi_duration':       time_avg.loc[pct_val, 'lofi-duration'],
+                    'hifi_duration':       time_avg.loc[pct_val, 'hifi-duration'],
+                    'lofi_duration_std':   time_std.loc[pct_val, 'lofi-duration'],
+                    'hifi_duration_std':   time_std.loc[pct_val, 'hifi-duration'],
+                }
+        else:
+            warnings.warn(f"No timing data for {algo}.")
+            continue
+        
+        for pct in training:
+            series_list = results[algo][pct]
+            if not series_list:
+                raise RuntimeError(f"No data for {algo} at {pct:.1f}%")
+            # align on episode, inner join
+            df_concat = pd.concat(series_list, axis=1, join="inner")
+            # optional: name columns by seed
+            df_concat.columns = seeds[: df_concat.shape[1]]
+            # compute mean + std
+            df_agg = pd.DataFrame({
+                "episode": df_concat.index,
+                "mean_reward": df_concat.mean(axis=1) if df_concat.shape[1] > 1 else df_concat.iloc[:, 0],
+                "std_reward": df_concat.std(axis=1) if df_concat.shape[1] > 1 else 0,
+            }).reset_index(drop=True)
+            
+            # apply moving average across mean rewards and std rewards
+            if filter == moving_avg:
+                df_agg["mean_reward"] = filter(df_agg, col="mean_reward", window=N)["mean_reward"]
+                df_agg["std_reward"]  = filter(df_agg, col="std_reward",  window=N)["std_reward"]
+            elif filter == kalman:
+                df_agg["mean_reward"] = filter(df_agg, col="mean_reward", proc_var=1e-5, mes_var=1)["mean_reward"]
+                df_agg["std_reward"]  = filter(df_agg, col="std_reward",  proc_var=1e-5, mes_var=1)["std_reward"]
+            else:
+                raise ValueError(f"Unknown filter: {filter}. Use 'moving_avg' or 'kalman'.")
+            
+            # Drop NaN values
+            df_agg.dropna(inplace=True)
+            
+            aggregated[algo][pct] = df_agg
+            
+    # persist
     if save_metrics:
         os.makedirs("data", exist_ok=True)
-        with open("data/results.pkl", "wb") as f:
-            pickle.dump(results, f)
-        tqdm.write("Aggregated metrics saved to data/results.pkl")
+        with open("data/aggregated_results.pkl", "wb") as f:
+            pickle.dump(aggregated, f)
+        tqdm.write("Aggregated results saved to data/aggregated_results.pkl")
     else:
         tqdm.write("WARNING: Metrics not saved.")
 
-    # Plot using the aggregated data
-    plot.dropoff(results, save_plot)
-    plot.performance_contour(results, save_plot)
-    plot.transfer_gap_plot(results, save_plot)
-    plot.performance(results, save_plot)
-    plot.training(results, ctrl, save_plot)
+    # plotting
+    # compute seed-averaged dropoff & performance metrics
+    dropoff_metrics     = metrics.dropoff(aggregated, N=50)
+    performance_metrics = metrics.performance(aggregated, avg_times, N=50)
+    contour_metrics     = metrics.performance_contour(performance_metrics)
+    transfer_metrics    = metrics.transfer_gap(performance_metrics)
 
 
-if __name__ == '__main__':
-    main()
+    plot.dropoff(dropoff_metrics, save_plot)
+    plot.performance(performance_metrics, save_plot)
+    plot.performance_contour(contour_metrics, save_plot)
+    plot.transfer_gap_plot(transfer_metrics, save_plot)
+    plot.training(aggregated, training, save_plot)
+
+
+if __name__ == "__main__":
+    main(N=100, filter=kalman)
