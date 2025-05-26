@@ -63,7 +63,7 @@ The `run.py` script automates this process, allowing for experiments with:
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/amoec/ATC-FlexRL.git
+    git clone https://github.com/amoec/ATC_FlexRL.git
     cd ATC-FlexRL
     ```
 
