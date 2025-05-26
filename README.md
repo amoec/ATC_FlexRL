@@ -92,10 +92,9 @@ The primary script for running experiments is `run.py`. It orchestrates the trai
 
 *   `--algo <ALGORITHM_NAME>`: Specifies the RL algorithm to use (e.g., `PPO`, `A2C`, `SAC`). This is a required argument.
 *   `--runtime <HOURS>`: Total allocated runtime for the experiment in hours. This is a required argument.
-*   `--n_incr <NUMBER>`: Number of increments for LoFi pre-training percentages (e.g., if `n_incr=10`, it might test 0%, 10%, ..., 100% LoFi pre-training). This is a required argument.
-*   `--window <SIZE>`: Window size for moving average calculations, likely related to performance monitoring or reward smoothing. This is a required argument.
+*   `--n_incr <NUMBER>`: Number of increments for LoFi pre-training percentages (e.g., if `n_incr=5`, it tests 0%, 20%, ..., 100% LoFi pre-training). This is a required argument.
+*   `--window <SIZE>`: Window size for moving average calculations. This is a required argument.
 *   `--seed <SEED_VALUE>`: Base seed for reproducibility (default: `42`).
-*   `--baseline`: If set, runs baseline experiments. This typically involves full training in the HiFi environment without LoFi pre-training, across multiple seeds derived from the base seed.
 
 **Example Usage:**
 
