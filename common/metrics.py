@@ -82,7 +82,7 @@ def dropoff(aggregated_per_seed: dict, N: int) -> dict:
                 # recovery
                 rec_cond = ((Pbar_seed['env']==1) &
                        (Pbar_seed['reward'] >= Pbar_s_seed) &
-                       (Pbar_seed['episode'] > t_s + N/4))
+                       (Pbar_seed['episode'] > t_s + N))
                 if rec_cond.any():
                     t_rec_seed = int(Pbar_seed.loc[rec_cond, 'episode'].iloc[0])
                     tau_seed = t_rec_seed - t_s
