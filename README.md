@@ -79,7 +79,7 @@ The `run.py` script automates this process, allowing for experiments with:
     source venv/bin/activate  # On Windows: venv\Scripts\activate
     pip install -r requirements.txt
     ```
-    The `CR_LoFi` and `CR_HiFi` directories might have their own `requirements.txt` or `setup.py` files. Ensure their dependencies are also installed. For example:
+    The `CR_LoFi` and `CR_HiFi` directories might have their own `requirements.txt` file. Ensure their dependencies are also installed. For example:
     ```bash
     pip install -r CR_LoFi/requirements.txt
     ```
