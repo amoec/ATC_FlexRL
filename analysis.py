@@ -239,6 +239,7 @@ def main(N: int = 50,
             
             if has_data_for_this_seed_plot:
                 seed_plot_dir = os.path.join(algo_plot_dir, f"seed_{current_seed_id}")
+                poster_dir = 'plots/poster/training/'
                 # The plot.training function will create {algo}.png inside this directory.
                 # So, the file will be like plots/training_individual/A2C/seed_123/A2C.png
                 plot.training(
@@ -248,7 +249,16 @@ def main(N: int = 50,
                     dpi=600,
                     is_individual_seed=True,
                     plot_title_prefix=f"Seed {current_seed_id} - ", # Algo name will be added by plot.training
-                    custom_save_dir=seed_plot_dir
+                    custom_save_dir=seed_plot_dir,
+                    poster_format=False
+                )
+                plot.poster(
+                    seed_specific_plot_data, # Contains data for one algo, one seed, all pcts
+                    training,
+                    save_plot=save_plot,
+                    dpi=600,
+                    custom_save_dir=poster_dir,
+                    xlim=(0, max_ep), # Set xlim to max_ep for poster plots
                 )
     
     # Plots for aggregated metrics
@@ -264,10 +274,9 @@ def main(N: int = 50,
     # Define which metrics to include in the heatmaps and their display names
     # This config can be used for both individual and summary panel plots, or you can have separate ones.
     metrics_for_heatmaps_config = [
-        ('DeltaPbar_rel', 'Relative Final Reward [%]', 'performance'),
-        ('T_tot_rel', 'Relative Total Training Time [%]', 'performance'),
-        ('DeltaPbar_star_d_rel', 'Transfer Penalty [%]', 'dropoff') # Added from dropoff_metrics
-        # ('t_XO_rel', 't_XO Relative (%)', 'performance'), # Example
+        ('DeltaPbar',       'Absolute Change in Final Reward',     'performance'),
+        ('T_tot_rel',       'Relative Total Training Time [%]', 'performance'),
+        ('DeltaPbar_star',  'Absolute Transfer Penalty',       'dropoff')
     ]
 
     plot.dropoff(dropoff_metrics, save_plot)
@@ -292,11 +301,5 @@ def main(N: int = 50,
         plot_filename_prefix="all_algos_summary" # Prefix for the filenames
     )
     
-    # plot.transfer_gap_plot(transfer_metrics, save_plot) # This was commented out in your provided analysis.py
-    plot.time_to_threshold_stacked_area(time_to_threshold_metrics, save_plot, dpi=600)
-
-    # The aggregated training plot is removed as per request.
-    # plot.training(aggregated, training, save_plot) # This line is removed.
-
 if __name__ == "__main__":
-    main(N=100, filter=moving_avg, dpi=600)
+    main(N=50, filter=kalman, dpi=600)

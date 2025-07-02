@@ -66,13 +66,13 @@ def dropoff(aggregated_per_seed: dict, N: int) -> dict:
                     Pbar_s_seed = np.nan
                 else:
                     Pbar_s_seed = float(lofi_rewards.tail(N+1).mean())
-
-
+                # initialize metrics (no more _d_rel)
                 current_seed_m = dict(
                     t_rec=np.nan, tau=np.nan, tau_rel=np.nan,
-                    Pbar_s=Pbar_s_seed,
+                    Pbar_s=np.nan,
                     Pbar_d=np.nan, DeltaPbar_d=np.nan,
-                    DeltaPbar_d_rel=np.nan, DeltaPbar_star_d_rel=np.nan
+                    DeltaPbar_d_rel=np.nan,
+                    DeltaPbar_star=np.nan   # NEW: absolute step‐delta
                 )
 
                 if np.isnan(Pbar_s_seed): # Cannot proceed if Pbar_s is NaN
@@ -100,6 +100,14 @@ def dropoff(aggregated_per_seed: dict, N: int) -> dict:
                             DeltaPbar_d_rel=100*delta_seed/(Pbar_s_seed - Pmin_seed) if Pbar_s_seed!=Pmin_seed else np.nan,
                             DeltaPbar_star_d_rel=100*delta_seed/(Pmax_seed - Pmin_seed) if Pmax_seed!=Pmin_seed else np.nan
                         )
+                ep = Pbar_seed['episode']
+                rw = Pbar_seed['reward']
+                pre_mask  = (ep > max(t_s-100,0)) & (ep <= t_s)
+                post_mask = (ep > t_s) & (ep <= t_s+100)
+                P_pre  = rw[pre_mask].mean()  if not rw[pre_mask].empty  else np.nan
+                P_post = rw[post_mask].mean() if not rw[post_mask].empty else np.nan
+                if pd.notna(P_pre) and pd.notna(P_post):
+                    current_seed_m['DeltaPbar_star'] = P_post - P_pre
                 per_seed_metrics_list.append(current_seed_m)
             
             if not per_seed_metrics_list:
@@ -146,37 +154,17 @@ def performance(aggregated_per_seed: dict,
         else:
             warnings.warn(f"Algo {algo}: Missing timing data for 0.0% HiFi baseline (avg_times[algo][0.0]['hifi_duration_mean']). T_tot_rel will be NaN.")
 
-        seed_finalN_rewards_hifi_baseline_list = []
-        seed_Pmin_overall_hifi_baseline_list = []
-        seed_Pmax_overall_hifi_baseline_list = []
-
+        # 1) baseline final‐100 mean
+        seed_final100_baseline = []
         for base_hifi_seed_df in baseline_hifi_seed_dfs:
-            Pbar_hifi_base_seed = base_hifi_seed_df[['episode', 'mean_reward']].copy().rename(columns={'mean_reward': 'reward'})
-            if Pbar_hifi_base_seed.empty:
-                seed_finalN_rewards_hifi_baseline_list.append(np.nan)
-                seed_Pmin_overall_hifi_baseline_list.append(np.nan)
-                seed_Pmax_overall_hifi_baseline_list.append(np.nan)
-                continue
-            
-            if len(Pbar_hifi_base_seed) >= N:
-                seed_finalN_rewards_hifi_baseline_list.append(Pbar_hifi_base_seed['reward'].tail(N).mean())
-            else: 
-                seed_finalN_rewards_hifi_baseline_list.append(Pbar_hifi_base_seed['reward'].mean())
-
-            seed_Pmin_overall_hifi_baseline_list.append(Pbar_hifi_base_seed['reward'].min())
-            seed_Pmax_overall_hifi_baseline_list.append(Pbar_hifi_base_seed['reward'].max())
-
-        if not seed_finalN_rewards_hifi_baseline_list: 
-            warnings.warn(f"Algo {algo}: No valid reward data from 0.0% HiFi runs to establish baseline performance. Skipping.")
-            continue
-            
-        P_hifi_baseline_finalN_mean = np.nanmean(seed_finalN_rewards_hifi_baseline_list)
-        Pmin_hifi_overall_baseline_mean = np.nanmean(seed_Pmin_overall_hifi_baseline_list)
-        Pmax_hifi_overall_baseline_mean = np.nanmean(seed_Pmax_overall_hifi_baseline_list)
-
-        if np.isnan(P_hifi_baseline_finalN_mean):
-            warnings.warn(f"Algo {algo}: P_hifi_baseline_finalN_mean is NaN. DeltaPbar calculations will be affected. Skipping performance metrics for this algo.")
-            continue
+            df0 = base_hifi_seed_df[['episode','mean_reward']].rename(columns={'mean_reward':'reward'})
+            if len(df0) >= 100:
+                seed_final100_baseline.append(df0['reward'].tail(100).mean())
+            else:
+                seed_final100_baseline.append(df0['reward'].mean())
+                
+        P_hifi_baseline_final100_mean = np.nanmean(seed_final100_baseline)
+        
 
         # --- 2. Calculate metrics for each pct level for the current algo ---
         for pct, seed_df_list in pct_map_seeds.items():
@@ -216,39 +204,21 @@ def performance(aggregated_per_seed: dict,
             _T_tot_rel_transformed_for_pct = (T_total_rel_for_current_pct-1) * 100 if pd.notna(T_total_rel_for_current_pct) else np.nan
 
             for seed_df in seed_df_list:
-                Pbar_seed_df_orig = seed_df[['episode', 'mean_reward']].copy().rename(columns={'mean_reward': 'reward'})
+                dfc = seed_df[['episode','mean_reward']].rename(columns={'mean_reward':'reward'})
+                # last-100 window
+                if len(dfc) >= 100:
+                    P_curr100 = dfc['reward'].tail(100).mean()
+                else:
+                    P_curr100 = dfc['reward'].mean()
+                deltaP_seed = P_curr100 - P_hifi_baseline_final100_mean
                 
                 current_seed_metrics = {
-                    'DeltaPbar': np.nan, 'DeltaPbar_rel': np.nan,
-                    't_XO': np.nan, 't_XO_rel': np.nan,
-                    'T_tot': T_total_for_current_pct,
-                    'T_tot_rel': _T_tot_rel_transformed_for_pct # Use consistent transformed version
+                    'DeltaPbar': deltaP_seed,        # NEW absolute final‐100 delta
+                    'T_tot':    T_total_for_current_pct,
+                    'T_tot_rel':_T_tot_rel_transformed_for_pct
                 }
-
-                if Pbar_seed_df_orig.empty:
-                    # Metrics remain as initialized (NaN for DeltaPbar, etc.)
-                    pass
-                else:
-                    P_current_finalN_seed = np.nan
-                    if len(Pbar_seed_df_orig) >= N:
-                        P_current_finalN_seed = Pbar_seed_df_orig['reward'].tail(N).mean()
-                    elif not Pbar_seed_df_orig.empty: 
-                        P_current_finalN_seed = Pbar_seed_df_orig['reward'].mean()
-
-                    deltaP_seed = np.nan
-                    if pd.notna(P_current_finalN_seed) and pd.notna(P_hifi_baseline_finalN_mean):
-                        deltaP_seed = P_current_finalN_seed - P_hifi_baseline_finalN_mean
-                    
-                    deltaP_rel_seed = np.nan
-                    denominator_rel = Pmax_hifi_overall_baseline_mean - Pmin_hifi_overall_baseline_mean
-                    if pd.notna(deltaP_seed) and pd.notna(denominator_rel) and denominator_rel != 0:
-                        deltaP_rel_seed = deltaP_seed / denominator_rel
-                    
-                    current_seed_metrics['DeltaPbar'] = deltaP_seed
-                    current_seed_metrics['DeltaPbar_rel'] = deltaP_rel_seed * 100 if pd.notna(deltaP_rel_seed) else np.nan
-                
                 per_seed_metrics_list.append(current_seed_metrics)
-
+                
             # --- 3. Aggregate metrics from all seeds for this (algo, pct) ---
             # If seed_df_list was not empty, per_seed_metrics_list will not be empty.
             metrics_df = pd.DataFrame(per_seed_metrics_list)

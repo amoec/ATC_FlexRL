@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-def moving_avg(df: pd.DataFrame, col: str, window: int=250, *args, **kwargs) -> pd.DataFrame:
+def moving_avg(df: pd.DataFrame, col: str, window: int=50, *args, **kwargs) -> pd.DataFrame:
     """
     Moving average filter.
     
