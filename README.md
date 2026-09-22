@@ -1,113 +1,99 @@
-# Mixed-Fidelity Air Traffic Control RL Training
+# ATC-FlexRL: Mixed-Fidelity Reinforcement Learning for Air Traffic Conflict Resolution
 
-This repository contains the code for a research project investigating the feasibility and effectiveness of Mixed-Fidelity (MiFi) training for Reinforcement Learning (RL) agents in Air Traffic Management (ATM) conflict resolution tasks. The project explores how pre-training RL agents in a low-fidelity (LoFi) environment can accelerate and improve performance when subsequently trained in a high-fidelity (HiFi) environment.
+Code for the paper *Mixed-Fidelity Reinforcement Learning for Aircraft Conflict-Resolution*, presented at SESAR Innovation Days 2025.
 
-## Project Overview
+Training reinforcement learning agents in a realistic air traffic simulator is slow and computationally expensive. This project tests whether that cost can be reduced by pre-training agents in a cheap, low-fidelity (LoFi) simulation and then transferring them to a realistic, high-fidelity (HiFi) one, a mixed-fidelity (MiFi) approach to closing the gap between fast simulation and realistic simulation.
 
-The core idea is to leverage a computationally inexpensive LoFi simulation for initial learning and then transfer this knowledge to a more complex and realistic HiFi simulation. This approach aims to reduce the overall training time and computational resources required to develop effective RL-based conflict resolution strategies for air traffic control.
+## How it works
 
-The project includes:
--   **LoFi Environment (`CR_LoFi/`)**: A simplified air traffic simulation environment.
--   **HiFi Environment (`CR_HiFi/`)**: A more detailed and realistic air traffic simulation environment.
--   **Experiment Orchestration (`run.py`)**: A script to manage and automate training runs across different configurations, RL algorithms, and MiFi strategies.
--   **Analysis Tools** (implied by `analysis.py` and `plots/`): Scripts and utilities for processing experiment results and generating visualizations.
--   **Common Utilities (`common/`)**: Shared code for callbacks, filters, metrics, and plotting used across the project.
+Training happens in two stages:
 
-## Directory Structure
+1. **LoFi pre-training.** An agent is trained in the `CR_LoFi` environment, either for a set number of steps or until it reaches a specified performance percentage. This environment is computationally cheap, so the agent learns the basics quickly.
+2. **HiFi training.** The pre-trained agent is transferred to the `CR_HiFi` environment and training continues in the more realistic, more expensive simulation.
 
-```
-.
-├── README.md
-├── requirements.txt        # Python dependencies
-├── run.py                  # Main script to run experiments
-├── analysis.py             # Script for analyzing results
-├── common/                 # Shared utilities
-│   ├── callbacks.py
-│   ├── filters.py
-│   ├── metrics.py
-│   └── plot.py
-├── CR_LoFi/                # Low-Fidelity environment and training code
-│   ├── main.py             # Main script for LoFi component
-│   ├── atcenv/             # LoFi ATC environment source
-│   └── ...
-├── CR_HiFi/                # High-Fidelity environment and training code
-│   ├── main.py             # Main script for HiFi component
-│   ├── bluesky_gym/        # HiFi ATC environment
-│   └── ...
-├── experiments/            # Stores raw results, logs, and model checkpoints
-│   ├── ATC_RL.{seed}/      # Results for a specific base seed
-│   │   ├── {ALGO}_ts.csv   # Timing information for algorithms
-│   │   ├── LoFi-{ALGO}/    # LoFi training outputs
-│   │   └── HiFi-{ALGO}/    # HiFi training outputs (with LoFi pre-training)
-│   └── ...
-├── plots/                  # Stores generated plots and visualizations
-│   └── ...
-└── data/                   # Stores aggregated/pickled results (optional)
+`run.py` automates the full pipeline and supports:
+
+- multiple RL algorithms: PPO, A2C, SAC, DDPG and TD3;
+- a sweep over LoFi pre-training levels, from 0% to 100%;
+- baseline runs trained purely in LoFi or purely in HiFi, for comparison.
+
+## Components
+
+| Path | Purpose |
+| --- | --- |
+| `CR_LoFi/` | Low-fidelity conflict-resolution environment (Git submodule) |
+| `CR_HiFi/` | High-fidelity conflict-resolution environment, built on BlueSky-Gym (Git submodule) |
+| `run.py` | Orchestrates training runs across algorithms, pre-training shares and baselines |
+| `analysis.py` | Aggregates results from `experiments/` and writes figures to `plots/` |
+| `common/` | Shared callbacks, filters, metrics and plotting utilities |
+
+## Quick start
+
+Clone the repository together with its submodules:
+
+```bash
+git clone --recurse-submodules https://github.com/amoec/ATC_FlexRL.git
+cd ATC_FlexRL
 ```
 
-**Note**: `CR_LoFi` and `CR_HiFi` are Git submodules. You will need to initialize them after cloning this repository.
+If you have already cloned it without submodules, run `git submodule update --init --recursive` instead.
 
-## Methodology
+Create a virtual environment and install the dependencies:
 
-The MiFi training approach involves two main stages:
+```bash
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+pip install -r CR_LoFi/requirements.txt
+pip install -r CR_HiFi/requirements.txt
+```
 
-1.  **LoFi Pre-training**: An RL agent is trained in the `CR_LoFi` environment for a certain number of steps or up to a specified performance percentage. This environment is designed to be computationally efficient, allowing for rapid initial learning.
-2.  **HiFi Training/Fine-tuning**: The pre-trained agent is then transferred to the `CR_HiFi` environment. Training continues in this more realistic but computationally intensive environment.
+Run an experiment with PPO, a 24-hour budget, 10 pre-training increments and a moving-average window of 100:
 
-The `run.py` script automates this process, allowing for experiments with:
--   Different RL algorithms (e.g., PPO, A2C, SAC, DDPG, TD3).
--   Varying levels of LoFi pre-training (controlled by percentages).
--   Baseline runs (training purely in HiFi or LoFi).
-
-## Setup
-
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/amoec/ATC_FlexRL.git
-    cd ATC-FlexRL
-    ```
-
-2.  **Initialize Submodules:**
-    ```bash
-    git submodule update --init --recursive
-    ```
-
-3.  **Install Dependencies:**
-    It's recommended to use a virtual environment (e.g., `venv` or `conda`).
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
-    pip install -r requirements.txt
-    ```
-    The `CR_LoFi` and `CR_HiFi` directories might have their own `requirements.txt` file. Ensure their dependencies are also installed. For example:
-    ```bash
-    pip install -r CR_LoFi/requirements.txt
-    ```
-
-## Running Experiments
-
-The primary script for running experiments is `run.py`. It orchestrates the training in both LoFi and HiFi environments based on the specified arguments.
-
-**Key Arguments for `run.py`:**
-
-*   `--algo <ALGORITHM_NAME>`: Specifies the RL algorithm to use (e.g., `PPO`, `A2C`, `SAC`). This is a required argument.
-*   `--runtime <HOURS>`: Total allocated runtime for the experiment in hours. This is a required argument.
-*   `--n_incr <NUMBER>`: Number of increments for LoFi pre-training percentages (e.g., if `n_incr=5`, it tests 0%, 20%, ..., 100% LoFi pre-training). This is a required argument.
-*   `--window <SIZE>`: Window size for moving average calculations. This is a required argument.
-*   `--seed <SEED_VALUE>`: Base seed for reproducibility (default: `42`).
-
-**Example Usage:**
-
-To run an experiment with the PPO algorithm, a 24-hour runtime, 10 pre-training increments, and a window size of 100:
 ```bash
 python run.py --algo PPO --runtime 24 --n_incr 10 --window 100 --seed 123
 ```
 
-### Experiment Output
+## Arguments for `run.py`
 
--   **Logs and Models**: Training logs, saved models, and other artifacts are typically saved in the `experiments/` directory. The structure is usually `experiments/ATC_RL.{base_seed}/{LoFi|HiFi}-{algo}/{algo}_{percentage_or_run_id}/`.
+| Argument | Required | Description |
+| --- | --- | --- |
+| `--algo` | yes | RL algorithm: `PPO`, `A2C`, `SAC`, `DDPG` or `TD3` |
+| `--runtime` | yes | Total runtime budget for the experiment, in hours |
+| `--n_incr` | yes | Number of increments for the LoFi pre-training percentage. With `5`, the levels tested are 0%, 20%, 40%, 60%, 80% and 100% |
+| `--window` | yes | Window size for moving-average calculations |
+| `--seed` | no | Base seed for reproducibility (default: `42`) |
 
-## Analysis and Plotting
+## Output
 
--   The `analysis.py` script is used to process the data from the `experiments/` directory.
--   Generated plots and visualizations are stored in the `plots/` directory.
+Training logs, model checkpoints and timing data are written to:
+
+```
+experiments/ATC_RL.{seed}/
+├── {ALGO}_ts.csv            # timing information per algorithm
+├── LoFi-{ALGO}/             # LoFi training outputs
+└── HiFi-{ALGO}/             # HiFi training outputs, with LoFi pre-training
+```
+
+`analysis.py` processes these results and saves figures to `plots/`. Aggregated results can be stored in `data/`.
+
+## Citation
+
+If you use this code, please cite:
+
+```bibtex
+@inproceedings{moec2025mifi,
+  title     = {Mixed-Fidelity Reinforcement Learning for Aircraft Conflict-Resolution},
+  author    = {Moec, Adam and Groot, Dieudonne Janthony and Ellerbroek, Joost},
+  booktitle = {SESAR Innovation Days 2025},
+  year      = {2025}
+}
+```
+
+## Acknowledgements
+
+The low-fidelity environment is adapted from [atcenv](https://github.com/jangroter/atcenv). The high-fidelity environment is built on [BlueSky-Gym](https://github.com/TUDelft-CNS-ATM/bluesky-gym) and the [BlueSky](https://github.com/TUDelft-CNS-ATM/bluesky) air traffic simulator. This work was carried out at the Control & Operations department of the Faculty of Aerospace Engineering, TU Delft.
+
+## License
+
+This project is licensed under the MIT License; see [LICENSE](LICENSE). The submodules are separate repositories and carry their own licences.
