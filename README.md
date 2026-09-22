@@ -1,6 +1,6 @@
 # ATC-FlexRL: Mixed-Fidelity Reinforcement Learning for Air Traffic Conflict Resolution
 
-Code for the paper *Mixed-Fidelity Reinforcement Learning for Aircraft Conflict-Resolution*, presented at SESAR Innovation Days 2025.
+Code for the paper [*Mixed-Fidelity Reinforcement Learning for Aircraft Conflict-Resolution*](https://www.sesarju.eu/sites/default/files/documents/sid/2025/papers/SIDs_2025_paper_17-final.pdf), presented at SESAR Innovation Days 2025.
 
 Training reinforcement learning agents in a realistic air traffic simulator is slow and computationally expensive. This project tests whether that cost can be reduced by pre-training agents in a cheap, low-fidelity (LoFi) simulation and then transferring them to a realistic, high-fidelity (HiFi) one, a mixed-fidelity (MiFi) approach to closing the gap between fast simulation and realistic simulation.
 
